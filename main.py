@@ -1,4 +1,4 @@
-from scanner.image_loader import check_docker, list_images
+from scanner.image_loader import check_docker, list_images, pull_image
 
 
 def main():
@@ -11,11 +11,11 @@ def main():
 
     print(f"✅ Docker detected: {docker_version}\n")
 
-    images = list_images()
-    if not images:
-        print("ℹ️ No local Docker images found.")
-    else:
-        print("📦 Local Docker images:")
+    image_to_scan = "nginx:latest"
+
+    if pull_image(image_to_scan):
+        images = list_images()
+        print("📦 Local Docker images after pull:")
         for img in images:
             print(f"  - {img}")
 

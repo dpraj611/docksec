@@ -32,3 +32,19 @@ def list_images():
         return images if images != [''] else []
     except subprocess.CalledProcessError:
         return []
+
+def pull_image(image_name):
+    """
+    Pulls a Docker image if not present locally.
+    """
+    try:
+        print(f"⬇️ Pulling image: {image_name}")
+        subprocess.run(
+            ["docker", "pull", image_name],
+            check=True
+        )
+        print("✅ Image pulled successfully.\n")
+        return True
+    except subprocess.CalledProcessError:
+        print("❌ Failed to pull image.")
+        return False
