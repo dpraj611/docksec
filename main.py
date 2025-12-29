@@ -1,4 +1,5 @@
-from scanner.image_loader import check_docker, list_images, pull_image
+from scanner.image_loader import check_docker, pull_image
+from scanner.os_detector import detect_os
 
 
 def main():
@@ -13,11 +14,11 @@ def main():
 
     image_to_scan = "nginx:latest"
 
-    if pull_image(image_to_scan):
-        images = list_images()
-        print("📦 Local Docker images after pull:")
-        for img in images:
-            print(f"  - {img}")
+    if not pull_image(image_to_scan):
+        return
+
+    os_type = detect_os(image_to_scan)
+    print(f"🧠 Detected OS inside image: {os_type}")
 
 
 if __name__ == "__main__":
