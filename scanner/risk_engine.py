@@ -1,13 +1,13 @@
 def calculate_risk(findings):
     """
-    Assigns risk scores and produces summary.
+    Calculates risk summary and exposure score.
     """
 
-    severity_scores = {
-        "CRITICAL": 9,
+    severity_weights = {
+        "CRITICAL": 10,
         "HIGH": 7,
-        "MEDIUM": 5,
-        "LOW": 3
+        "MEDIUM": 4,
+        "LOW": 1
     }
 
     summary = {
@@ -17,29 +17,33 @@ def calculate_risk(findings):
         "LOW": 0
     }
 
-    total_score = 0
+    total_exposure = 0
 
     for f in findings:
-        sev = f["severity"]
-        score = severity_scores.get(sev, 0)
-        f["risk_score"] = score
+        sev = f.get("severity", "LOW")
+        weight = severity_weights.get(sev, 0)
 
-        if sev in summary:
-            summary[sev] += 1
+        f["risk_score"] = weight
+        summary[sev] += 1
+        total_exposure += weight
 
-        total_score += score
-
-    overall_risk = "LOW"
+    # --- Deployment gate (conservative) ---
     if summary["CRITICAL"] > 0:
+        overall_risk = "CRITICAL"
+    elif summary["HIGH"] >= 10:
         overall_risk = "CRITICAL"
     elif summary["HIGH"] > 0:
         overall_risk = "HIGH"
+    elif summary["MEDIUM"] >= 20:
+        overall_risk = "HIGH"
     elif summary["MEDIUM"] > 0:
         overall_risk = "MEDIUM"
+    else:
+        overall_risk = "LOW"
 
     return {
         "summary": summary,
-        "total_score": total_score,
         "overall_risk": overall_risk,
+        "total_exposure_score": total_exposure,
         "findings": findings
     }
