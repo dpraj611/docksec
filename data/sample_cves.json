@@ -1,0 +1,23 @@
+[
+  {
+    "cve_id": "CVE-2023-38545",
+    "package": "curl",
+    "affected_versions": "< 8.4.0",
+    "severity": "HIGH",
+    "description": "curl SOCKS5 heap buffer overflow"
+  },
+  {
+    "cve_id": "CVE-2022-1292",
+    "package": "openssl",
+    "affected_versions": "< 3.0.0",
+    "severity": "CRITICAL",
+    "description": "OpenSSL c_rehash vulnerability"
+  },
+  {
+    "cve_id": "CVE-2021-4034",
+    "package": "polkit",
+    "affected_versions": "< 0.120",
+    "severity": "CRITICAL",
+    "description": "Polkit pkexec local privilege escalation"
+  }
+]
