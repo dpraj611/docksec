@@ -1,0 +1,20 @@
+[
+  {
+    "cve_id": "CVE-2023-38545",
+    "ecosystem": "debian",
+    "packages": ["curl", "libcurl4"],
+    "affected_versions": ">= 7.69.0, < 8.4.0",
+    "cvss_score": 7.5,
+    "severity": "HIGH",
+    "description": "curl SOCKS5 heap buffer overflow"
+  },
+  {
+    "cve_id": "CVE-2022-1292",
+    "ecosystem": "debian",
+    "packages": ["openssl", "libssl3"],
+    "affected_versions": ">= 3.0.0, < 3.0.3",
+    "cvss_score": 9.8,
+    "severity": "CRITICAL",
+    "description": "OpenSSL c_rehash command injection"
+  }
+]
