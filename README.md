@@ -18,6 +18,8 @@ It does this by:
 - Matching them against known vulnerabilities
 - Producing actionable security reports
 
+---
+
 ## 🧠 How It Works (High-Level Workflow)
 
 Docker Image  
@@ -26,7 +28,7 @@ Docker Image
 → Package Inventory (dpkg / apk)  
 → CVE Matching (local database)  
 → Risk Scoring  
-→ JSON + Markdown Security Reports
+→ JSON + Markdown Security Reports  
 
 ---
 
@@ -45,6 +47,7 @@ Docker Image
 ---
 
 ## 📦 Requirements
+
 - Docker Desktop / Docker Engine
 - Python 3.9+
 
@@ -58,5 +61,104 @@ pip install -r requirements.txt
 
 Scan any Docker image:
 
-```bash
-python main.py nginx:latest
+    python main.py nginx:latest
+
+If no image is provided:
+
+    python main.py
+
+Output:
+
+    Usage: python main.py <docker-image>
+    Example: python main.py nginx:latest
+
+---
+
+## 📄 Example Output
+
+    📦 Found 150 installed packages
+
+    📄 Reports generated:
+      - reports/nginx_latest_report.json
+      - reports/nginx_latest_report.md
+
+    🔥 Overall Image Risk: LOW
+
+---
+
+## 🧾 Reports
+
+After a scan, reports are generated in the `reports/` directory:
+
+- **JSON report** → Machine-readable (CI/CD, automation)
+- **Markdown report** → Human-readable (GitHub, audits)
+
+Example:
+
+    reports/nginx_latest_report.md
+
+---
+
+## 🔐 CI/CD Integration
+
+DockSec Scan exits with a **non-zero exit code** if **CRITICAL vulnerabilities** are detected.
+
+This allows easy integration into pipelines:
+
+    python main.py my-image:latest || exit 1
+
+---
+
+## ⚠️ Limitations (By Design)
+
+- Uses a **local CVE dataset** (for learning and reproducibility)
+- Focuses on **system packages**, not application dependencies
+- Not intended to replace full enterprise scanners (yet)
+
+These trade-offs keep the tool:
+- Simple
+- Understandable
+- Easy to extend
+
+---
+
+## 🧩 Project Structure
+
+    docksec-scan/
+    ├── main.py
+    ├── scanner/
+    │   ├── image_loader.py
+    │   ├── os_detector.py
+    │   ├── package_extractor.py
+    │   ├── cve_matcher.py
+    │   ├── risk_engine.py
+    │   └── reporter.py
+    ├── data/
+    │   └── sample_cves.json
+    ├── reports/
+    ├── requirements.txt
+    └── README.md
+
+---
+
+## 🚀 Future Improvements
+
+- Live CVE feeds (OSV / NVD)
+- SBOM generation
+- Application dependency scanning
+- GitHub Actions workflow
+- HTML reports
+- Multi-image scanning
+
+---
+
+## 🧑‍💻 Author
+
+Built by **Dhruv Prajapati**  
+Focused on security engineering, DevSecOps, and offensive security tooling.
+
+---
+
+## 📜 Disclaimer
+
+This tool is for **educational and defensive security purposes only**.
