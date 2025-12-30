@@ -1,5 +1,6 @@
 from scanner.image_loader import check_docker, pull_image
 from scanner.os_detector import detect_os
+from scanner.package_extractor import extract_packages
 
 
 def main():
@@ -18,7 +19,16 @@ def main():
         return
 
     os_type = detect_os(image_to_scan)
-    print(f"🧠 Detected OS inside image: {os_type}")
+    print(f"🧠 Detected OS inside image: {os_type}\n")
+
+    packages = extract_packages(image_to_scan, os_type)
+    print(f"📦 Found {len(packages)} installed packages")
+
+    for pkg in packages[:10]:
+        print(f"  - {pkg['name']} {pkg['version']}")
+
+    if len(packages) > 10:
+        print("  ...")
 
 
 if __name__ == "__main__":
