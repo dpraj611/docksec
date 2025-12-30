@@ -99,6 +99,24 @@ Example:
     reports/nginx_latest_report.md
 
 ---
+## 🔐 CVE Data Source
+
+DockSec currently uses a **small, curated demo CVE dataset** located in `data/demo_cves.json`.
+
+This dataset is intentionally limited and exists to demonstrate:
+
+- CVE matching logic
+- Version range evaluation
+- Risk scoring and reporting
+- Scanner architecture
+
+It is **not** a complete or real-time vulnerability database and should not be used
+for production-grade vulnerability assessment.
+
+The scanner architecture is designed so this dataset can later be replaced with
+live sources such as **OSV.dev** or **NVD** without major refactoring.
+
+---
 
 ## 🔐 CI/CD Integration
 
@@ -123,6 +141,28 @@ These trade-offs keep the tool:
 
 ---
 
+## 🛡️ Secure Execution Model
+
+DockSec **never executes untrusted containers**.
+
+To eliminate the risk of malicious container behavior, the scanner inspects Docker
+images using a **filesystem-only approach**:
+
+- Containers are created in a stopped state using `docker create`
+- Image filesystems are extracted using `docker export`
+- Package metadata is parsed directly from filesystem data
+- Containers are immediately removed after inspection
+
+At no point are container entrypoints, commands, or runtime processes executed.
+
+This design prevents:
+- Arbitrary code execution
+- Resource exhaustion attacks
+- Network-based abuse
+- Container escape via runtime exploitation
+
+---
+
 ## 🧩 Project Structure
 
     docksec-scan/
@@ -135,7 +175,7 @@ These trade-offs keep the tool:
     │   ├── risk_engine.py
     │   └── reporter.py
     ├── data/
-    │   └── sample_cves.json
+    │   └── demo_cves.json
     ├── reports/
     ├── requirements.txt
     └── README.md
