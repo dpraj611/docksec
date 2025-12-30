@@ -44,7 +44,15 @@ def main():
     print("📄 Reports generated:")
     print(f"  - {json_report}")
     print(f"  - {md_report}")
+
     print(f"\n🔥 Overall Image Risk: {risk_report['overall_risk']}")
+
+    # CI/CD fail condition
+    if risk_report["overall_risk"] == "CRITICAL":
+        print("\n❌ CRITICAL vulnerabilities found. Failing scan.")
+        sys.exit(1)
+
+    print("\n✅ Scan completed successfully.")
 
 
 if __name__ == "__main__":
