@@ -1,42 +1,55 @@
 import json
 import os
+from packaging.version import parse as parse_version
 
 
 def load_cve_data():
-    """
-    Loads CVE data from local JSON file.
-    """
     data_path = os.path.join("data", "sample_cves.json")
-
-    with open(data_path, "r") as f:
+    with open(data_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def version_less_than(installed, vulnerable):
+def normalize_version(version):
     """
-    Very simple version comparison.
-    Only for demo purposes.
+    Normalize distro-specific versions by trimming metadata.
+    Example:
+    8.14.1-2+deb13u2 -> 8.14.1
     """
-    try:
-        return installed < vulnerable
-    except Exception:
-        return False
+    for sep in ["-", "+"]:
+        if sep in version:
+            version = version.split(sep)[0]
+    return version
+
+
+def is_vulnerable(installed, affected_expression):
+    """
+    Check if installed version satisfies vulnerability condition.
+    Example affected_expression: "< 8.4.0"
+    """
+    operator, vuln_version = affected_expression.split()
+    installed_v = parse_version(normalize_version(installed))
+    vuln_v = parse_version(vuln_version)
+
+    if operator == "<":
+        return installed_v < vuln_v
+    if operator == "<=":
+        return installed_v <= vuln_v
+    if operator == ">":
+        return installed_v > vuln_v
+    if operator == ">=":
+        return installed_v >= vuln_v
+
+    return False
 
 
 def match_cves(packages):
-    """
-    Matches installed packages against CVE database.
-    """
     cves = load_cve_data()
     findings = []
 
     for pkg in packages:
         for cve in cves:
             if pkg["name"] == cve["package"]:
-                # Extract vulnerable version threshold
-                vuln_version = cve["affected_versions"].replace("<", "").strip()
-
-                if version_less_than(pkg["version"], vuln_version):
+                if is_vulnerable(pkg["version"], cve["affected_versions"]):
                     findings.append({
                         "package": pkg["name"],
                         "version": pkg["version"],
