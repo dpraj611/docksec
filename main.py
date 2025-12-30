@@ -2,6 +2,8 @@ from scanner.image_loader import check_docker, pull_image
 from scanner.os_detector import detect_os
 from scanner.package_extractor import extract_packages
 from scanner.cve_matcher import match_cves
+from scanner.risk_engine import calculate_risk
+from scanner.reporter import generate_reports
 
 
 def main():
@@ -26,16 +28,16 @@ def main():
     print(f"📦 Found {len(packages)} installed packages\n")
 
     findings = match_cves(packages)
+    risk_report = calculate_risk(findings)
 
-    if not findings:
-        print("✅ No known vulnerabilities found.")
-    else:
-        print("🚨 Vulnerabilities detected:\n")
-        for f in findings:
-            print(
-                f"- {f['package']} {f['version']} | "
-                f"{f['cve_id']} | {f['severity']}\n  {f['description']}"
-            )
+    json_report, md_report = generate_reports(
+        image_to_scan, os_type, risk_report
+    )
+
+    print("📄 Reports generated:")
+    print(f"  - {json_report}")
+    print(f"  - {md_report}")
+    print(f"\n🔥 Overall Image Risk: {risk_report['overall_risk']}")
 
 
 if __name__ == "__main__":
