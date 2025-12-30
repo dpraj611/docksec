@@ -4,7 +4,7 @@ from packaging.version import parse as parse_version
 
 
 def load_cve_data():
-    data_path = os.path.join("data", "sample_cves.json")
+    data_path = os.path.join("data", "demo_cves.json")
     with open(data_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -69,8 +69,9 @@ def match_cves(packages):
     # Build O(1) lookup table
     cve_lookup = {}
     for cve in cves:
-        pkg = cve["package"].lower()
-        cve_lookup.setdefault(pkg, []).append(cve)
+        for pkg in cve["packages"]:
+            pkg = pkg.lower()
+            cve_lookup.setdefault(pkg, []).append(cve)
 
     findings = []
 
