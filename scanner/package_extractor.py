@@ -1,47 +1,125 @@
 import subprocess
+import tarfile
+import tempfile
+import os
+
+
+def parse_dpkg_status(content):
+    """
+    Parse /var/lib/dpkg/status
+    """
+    packages = []
+    current = {}
+
+    for line in content.splitlines():
+        if not line.strip():
+            if "Package" in current and "Version" in current:
+                packages.append({
+                    "name": current["Package"],
+                    "version": current["Version"]
+                })
+            current = {}
+            continue
+
+        if ":" in line:
+            key, value = line.split(":", 1)
+            current[key.strip()] = value.strip()
+
+    return packages
+
+
+def parse_apk_installed(content):
+    """
+    Parse /lib/apk/db/installed
+    """
+    packages = []
+    current = {}
+
+    for line in content.splitlines():
+        if not line.strip():
+            if "P" in current and "V" in current:
+                packages.append({
+                    "name": current["P"],
+                    "version": current["V"]
+                })
+            current = {}
+            continue
+
+        if ":" in line:
+            key, value = line.split(":", 1)
+            current[key.strip()] = value.strip()
+
+    return packages
 
 
 def extract_packages(image_name, os_type):
     """
-    Extract installed packages from Docker image.
-    Returns a list of dictionaries: [{name, version}]
+    Safely extract installed packages WITHOUT running the container.
+    Uses:
+      docker create
+      docker export
     """
 
-    packages = []
+    container_id = None
+    tmp_tar_path = None
 
     try:
-        if os_type == "debian":
-            result = subprocess.run(
-                ["docker", "run", "--rm", image_name, "dpkg", "-l"],
-                capture_output=True,
-                text=True
-            )
+        # 1️⃣ Create stopped container (NO execution)
+        container_id = subprocess.run(
+            ["docker", "create", image_name],
+            capture_output=True,
+            text=True,
+            check=True
+        ).stdout.strip()
 
-            for line in result.stdout.splitlines():
-                if line.startswith("ii"):
-                    parts = line.split()
-                    if len(parts) >= 3:
-                        packages.append({
-                            "name": parts[1],
-                            "version": parts[2]
-                        })
+        # 2️⃣ Create temp file correctly (Windows-safe)
+        fd, tmp_tar_path = tempfile.mkstemp(suffix=".tar")
+        os.close(fd)  # CRITICAL: close before docker writes
 
-        elif os_type == "alpine":
-            result = subprocess.run(
-                ["docker", "run", "--rm", image_name, "apk", "info", "-v"],
-                capture_output=True,
-                text=True
-            )
+        # 3️⃣ Export filesystem
+        subprocess.run(
+            ["docker", "export", container_id, "-o", tmp_tar_path],
+            check=True
+        )
 
-            for line in result.stdout.splitlines():
-                if "-" in line:
-                    name, version = line.rsplit("-", 1)
-                    packages.append({
-                        "name": name,
-                        "version": version
-                    })
+        packages = []
+
+        # 4️⃣ Read package database files
+        with tarfile.open(tmp_tar_path, "r") as tar:
+            if os_type == "debian":
+                try:
+                    status_file = tar.extractfile("var/lib/dpkg/status")
+                    if status_file:
+                        content = status_file.read().decode("utf-8", errors="ignore")
+                        packages = parse_dpkg_status(content)
+                except KeyError:
+                    pass
+
+            elif os_type == "alpine":
+                try:
+                    installed_file = tar.extractfile("lib/apk/db/installed")
+                    if installed_file:
+                        content = installed_file.read().decode("utf-8", errors="ignore")
+                        packages = parse_apk_installed(content)
+                except KeyError:
+                    pass
 
         return packages
 
-    except Exception:
+    except Exception as e:
+        print(f"❌ Failed to extract packages safely: {e}")
         return []
+
+    finally:
+        # 5️⃣ Cleanup ALWAYS
+        if container_id:
+            subprocess.run(
+                ["docker", "rm", "-f", container_id],
+                capture_output=True
+            )
+
+        if tmp_tar_path and os.path.exists(tmp_tar_path):
+            try:
+                os.unlink(tmp_tar_path)
+            except Exception:
+                pass
