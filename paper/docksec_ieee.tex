@@ -1,0 +1,392 @@
+\documentclass[12pt,draftclsnofoot,onecolumn]{IEEEtran}
+
+\usepackage{cite}
+\usepackage{url}
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstdefinestyle{docksec}{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible
+}
+
+\title{DockSec: A Safe-by-Design Educational Prototype for Static Vulnerability Assessment of Docker Container Images}
+
+\author{Dhruv Prajapati}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Containerized software has become a default deployment unit for cloud-native systems, continuous delivery pipelines, and platform engineering workflows. While containers improve portability and operational consistency, they also introduce a large and often opaque software supply-chain surface inherited from base images, distribution packages, and transitive dependencies embedded into the container filesystem. This paper presents DockSec, a lightweight educational prototype for Docker image vulnerability assessment that emphasizes explainability, simple architecture, and low operational risk. The system inspects a target image, identifies its operating system family, extracts installed system packages, matches package versions against a curated Common Vulnerabilities and Exposures dataset, computes a rule-based risk score, and emits machine-readable and human-readable reports. A core design goal is to minimize exposure to malicious container behavior by preferring filesystem-centric inspection through \texttt{docker create} and \texttt{docker export} rather than executing arbitrary application workloads. The paper also positions DockSec relative to larger scanners, including the broader multi-check DockerScan project that inspired part of this work, and argues that a compact prototype remains valuable for education, experimentation, and secure-tooling research. The manuscript details the threat model, architecture, implementation, prototype behavior on representative images, limitations, and concrete directions for extending the project toward production-grade scanning, including live vulnerability feeds, Software Bill of Materials support, and stronger non-execution guarantees.
+\end{abstract}
+
+\begin{IEEEkeywords}
+container security, Docker, vulnerability scanning, CVE matching, static analysis
+\end{IEEEkeywords}
+
+\section{Introduction}
+Containers have reshaped software delivery by offering a compact, repeatable unit for packaging applications and their dependencies. Docker, in particular, accelerated the mainstream adoption of containerized workflows by making image construction, distribution, and execution straightforward across development, testing, and production environments \cite{merkel2014docker}. The same abstraction that improves portability, however, also obscures risk. A seemingly simple application image may embed hundreds of operating system packages, inherited base layers, and outdated libraries that expose a deployment to known vulnerabilities before the application itself is ever exercised.
+
+This reality has made container image scanning a standard control in contemporary DevSecOps pipelines. Mature tools such as Trivy and Grype provide broad ecosystem coverage, frequent database updates, and integration across continuous integration, registries, and orchestration systems \cite{trivyimage,grype}. Broader Docker security projects such as DockerScan extend beyond vulnerability matching into configuration auditing, secrets discovery, runtime analysis, and compliance checks \cite{dockerscanrepo}. Yet there remains educational value in smaller, transparent tools that help students and practitioners understand the mechanics of image inspection, package inventory extraction, vulnerability correlation, and risk reporting. Many production tools necessarily encapsulate substantial complexity, making it harder to study the essential workflow from first principles.
+
+DockSec was developed in that spirit. The project is a lightweight Python-based command-line scanner for Docker images. It accepts an image reference, pulls the image, determines whether the image resembles a Debian- or Alpine-based distribution, extracts installed packages, compares them against a local CVE dataset, and generates JSON and Markdown reports. The implementation is intentionally modest. It focuses on system packages rather than application dependencies and uses a small curated dataset rather than a live vulnerability feed. These limitations are not incidental; they are part of the prototype's teaching value. Because the codebase is compact, the full workflow can be studied, audited, modified, and extended with minimal onboarding overhead.
+
+Another important characteristic of DockSec is its security posture. The project documentation explicitly frames the scanner as a defensive tool and attempts to avoid executing untrusted containers. This is a meaningful design choice because scanning arbitrary third-party images can itself become a risk if the inspection process triggers malicious entrypoints, resource abuse, or hostile runtime behavior. Container security guidance from NIST emphasizes that application containers expand the attack surface and require controls across build, registry, orchestration, and host layers \cite{nist800190}. A scanner that aims to inspect potentially untrusted images should therefore treat its own execution model as part of the threat surface, not merely as an implementation detail.
+
+This paper contributes the following:
+\begin{enumerate}
+  \item A detailed technical description of DockSec as a safe-by-design educational prototype for Docker image vulnerability assessment.
+  \item A decomposition of the prototype into distinct stages: image acquisition, operating system detection, package extraction, CVE correlation, risk scoring, and reporting.
+  \item A security analysis of the intended non-execution inspection model and the current implementation gap in operating system detection.
+  \item A prototype-level evaluation using representative image reports generated by the project.
+  \item A research-oriented roadmap for evolving DockSec toward richer, more reliable, and more standards-aligned container security analysis.
+\end{enumerate}
+
+The rest of this paper is organized as follows. Section II summarizes relevant background on containers and vulnerability data. Section III motivates the problem and design goals. Section IV presents the system architecture. Section V describes the implementation. Section VI analyzes the security model. Section VII evaluates the prototype. Section VIII discusses limitations and threats to validity. Section IX outlines future work, and Section X concludes.
+
+\section{Background and Related Work}
+\subsection{Containers, Images, and Runtime Abstractions}
+Containers package an application with enough filesystem state and metadata to run consistently across environments while sharing the host kernel. This makes them lighter than full virtual machines, but also means isolation and security properties differ in important ways \cite{merkel2014docker}. Standardized image formats and runtime expectations have matured through the Open Container Initiative, which defines specifications for container images, runtime bundles, and distribution \cite{ocioverview,ociimage}. In practice, a Docker or OCI image is composed of layered filesystem archives plus metadata describing configuration, environment variables, entrypoints, and startup behavior.
+
+For security assessment, the layered filesystem is especially important. A large fraction of known vulnerabilities in container images arise not from the top-level application code but from inherited operating system packages or bundled libraries present somewhere within the image filesystem. Therefore, the ability to reason about image contents without necessarily launching the software is an appealing property for vulnerability scanners.
+
+\subsection{Vulnerability Databases and Severity Scoring}
+The Common Vulnerabilities and Exposures program provides identifiers for publicly disclosed vulnerabilities, while the National Vulnerability Database enriches CVE records with standardized metadata such as Common Weakness Enumeration, Common Platform Enumeration, and Common Vulnerability Scoring System information \cite{nvdgeneral}. CVSS, maintained by FIRST, offers a structured method for expressing vulnerability severity and environmental relevance \cite{cvss40}. In practical tooling, scanners rely on vulnerability databases to map software identifiers and versions to known weaknesses, then summarize those results in ways that can inform prioritization and deployment decisions.
+
+Direct vulnerability matching remains nontrivial. Package names vary across ecosystems, version strings may include vendor-specific suffixes, and the same upstream issue may be fixed through distribution-specific backports rather than simple version increments. Production scanners compensate with complex advisory sources, namespace logic, and distribution-aware matching rules. DockSec does not attempt to solve this general problem; instead, it illustrates the core mechanics using a small curated dataset and simple version normalization.
+
+\subsection{Container Vulnerability Scanning Tools}
+Modern open-source scanners provide broad and continuously evolving feature sets. Trivy supports image, filesystem, and repository scanning and can emit structured results for automation workflows \cite{trivyhome,trivyimage}. Grype similarly scans container images, filesystems, and SBOMs, and supports a large set of operating system and language ecosystems \cite{grype}. DockerScan, the broader project that inspired this repository, illustrates a different design point again: it combines vulnerability checks with CIS-style configuration review, secrets detection, runtime checks, and supply-chain-oriented inspections \cite{dockerscanrepo}.
+
+DockSec differs from these systems in both ambition and scope. It is not meant to compete with them on coverage or detection quality. Instead, it functions as a pedagogical prototype whose value lies in architectural transparency. That makes it particularly suitable for coursework, demonstrations, and controlled experimentation around scanning pipelines.
+
+\subsection{SBOMs and Software Supply-Chain Transparency}
+Software Bill of Materials documents have gained prominence as a way to improve transparency across the software supply chain. NTIA describes an SBOM as a formal record of the components and relationships used in software construction \cite{ntiasbom}. Standards such as SPDX provide structured formats for exchanging this information \cite{spdxoverview,spdxspec}. Although DockSec does not currently generate an SBOM, its package inventory stage is conceptually adjacent to SBOM production. Extending the prototype to emit SPDX or CycloneDX artifacts would make it more interoperable with broader software assurance workflows.
+
+\subsection{Container Security Research}
+Container security remains an active research area because containers provide efficiency and deployment convenience while preserving a meaningful attack surface around image provenance, runtime isolation, host kernel sharing, and orchestration complexity. NIST's application container guidance outlines security concerns across image creation, registries, orchestration, and runtime environments \cite{nist800190}. Recent survey and analysis work continues to emphasize that container security is not reducible to runtime isolation alone; static image contents, inherited dependencies, and patch hygiene all materially affect risk \cite{wong2021survey,ajith2024docker}.
+
+\section{Problem Statement and Design Goals}
+\subsection{Problem Statement}
+Organizations increasingly rely on third-party and internally built images to ship software quickly. In many environments, development teams use public base images such as \texttt{ubuntu}, \texttt{nginx}, \texttt{python}, or \texttt{node}, then layer application code on top. This improves productivity but creates at least three practical challenges.
+
+First, image contents are often poorly understood. Teams may know the top-level application framework but not the full set of installed operating system packages. Second, vulnerabilities in inherited packages may remain unnoticed until an external scanner or incident forces investigation. Third, naive inspection methods can themselves introduce risk if they execute an image's entrypoint or allow arbitrary code to run during analysis.
+
+DockSec addresses a simplified version of this problem: how can a small, auditable tool inspect a Docker image, identify a subset of relevant operating system packages, correlate them with known vulnerabilities, and summarize the result in a form useful for learning and basic CI gating?
+
+\subsection{Design Goals}
+The project reveals several explicit and implicit design goals.
+
+\subsubsection{Simplicity}
+The codebase should remain small enough for an individual learner to understand in a single reading session. This favors direct procedural logic over abstraction-heavy frameworks.
+
+\subsubsection{Safe Inspection Bias}
+The scanner should prefer inspection methods that do not execute arbitrary container workloads. In the ideal model, the scanner interacts with image metadata and exported filesystems only.
+
+\subsubsection{Cross-Platform Usability}
+The implementation should work on Windows, Linux, and macOS, assuming Docker and Python are available.
+
+\subsubsection{Actionable Reporting}
+Outputs should support both human interpretation and machine consumption. This motivates the simultaneous generation of Markdown and JSON reports.
+
+\subsubsection{Extensibility}
+The project should be easy to extend toward richer CVE sources, additional package ecosystems, SBOM generation, and CI integration.
+
+\subsection{Non-Goals}
+DockSec also has clear non-goals in its current form:
+\begin{itemize}
+  \item It is not a production-grade replacement for Trivy, Grype, DockerScan, or commercial scanners.
+  \item It does not scan language-specific dependencies such as Python wheels, Node packages, Java archives, or Go modules.
+  \item It does not attempt full distribution-aware advisory interpretation.
+  \item It does not implement live vulnerability database synchronization.
+  \item It does not analyze runtime behavior, exploitability, or reachability.
+\end{itemize}
+
+\section{System Architecture}
+\subsection{High-Level Pipeline}
+DockSec implements a linear scanning pipeline:
+
+\begin{enumerate}
+  \item Validate command-line input and Docker availability.
+  \item Pull the target image.
+  \item Determine the operating system family of the image.
+  \item Extract installed packages from exported filesystem metadata.
+  \item Match packages and versions against a curated CVE dataset.
+  \item Aggregate findings into a rule-based risk summary.
+  \item Generate JSON and Markdown reports.
+\end{enumerate}
+
+This workflow is summarized in Fig.~\ref{fig:pipeline}.
+
+\begin{figure}[!t]
+\centering
+\fbox{\parbox{0.9\textwidth}{\centering
+Input Docker image $\rightarrow$ Docker availability check $\rightarrow$ Image pull $\rightarrow$ OS detection $\rightarrow$ Filesystem export $\rightarrow$ Package inventory extraction $\rightarrow$ CVE matching $\rightarrow$ Risk scoring $\rightarrow$ JSON/Markdown report generation}}
+\caption{DockSec processing pipeline.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Module Decomposition}
+The implementation is decomposed into six scanner modules plus the CLI entrypoint:
+\begin{itemize}
+  \item \texttt{image\_loader.py}: Docker checks, image name validation, image pulling, and temporary container helpers.
+  \item \texttt{os\_detector.py}: distribution-family detection.
+  \item \texttt{package\_extractor.py}: package database extraction from the exported filesystem.
+  \item \texttt{cve\_matcher.py}: local CVE loading, version normalization, and vulnerability matching.
+  \item \texttt{risk\_engine.py}: severity aggregation and overall risk computation.
+  \item \texttt{reporter.py}: JSON and Markdown report generation.
+  \item \texttt{main.py}: orchestration of the full scan.
+\end{itemize}
+
+This modularity is modest but effective. Each component maps to a discrete stage in the scanning workflow, making the system easy to follow and modify. The architecture also highlights where future extensions can be attached, such as replacing the CVE dataset loader or adding more package extractors.
+
+\subsection{Data Flow}
+DockSec primarily exchanges plain Python dictionaries and lists rather than custom classes. A package record is represented as a dictionary containing a package name and version. A vulnerability finding enriches that structure with CVE ID, severity, description, and eventually a numeric risk score. The final report object contains a severity summary, overall risk level, total exposure score, and the list of findings. This simple data model supports transparency and rapid prototyping, although a larger system would likely benefit from stronger typing and schema validation.
+
+\section{Implementation Details}
+\subsection{Command-Line Entry and Scan Orchestration}
+The program begins in \texttt{main.py}. If the user does not provide an image name, the tool prints usage guidance and exits. When an image name is supplied, the scanner checks whether Docker is available by invoking \texttt{docker info}. If Docker is reachable, the image is pulled, the operating system is detected, packages are extracted, vulnerabilities are matched, a risk summary is computed, and reports are written to the \texttt{reports/} directory.
+
+The CLI is intentionally minimal. This simplicity reduces onboarding friction but also limits operational flexibility. For example, there are no flags for offline mode, custom CVE datasets, output paths, severity thresholds, or selective scanners. These are natural directions for future iteration.
+
+\subsection{Docker Interaction and Image Handling}
+Docker interaction is performed through Python's \texttt{subprocess} module. The scanner validates image names with a regular expression before attempting a pull. This is a useful guardrail because image references are untrusted input in the context of a CLI security tool. The image pull stage relies on the Docker daemon, while temporary inspection state is handled using container creation and export commands \cite{dockercreate,dockerexport}.
+
+Two design choices are notable here. First, the scanner reuses Docker itself rather than parsing image formats directly from registries or tar archives. This reduces implementation complexity at the cost of requiring a locally functioning daemon. Second, the tool depends on Docker CLI behavior remaining stable, which is acceptable for a prototype but would require more careful compatibility management in production.
+
+\subsection{Operating System Detection}
+Operating system detection is currently implemented by invoking:
+
+\begin{lstlisting}[style=docksec,caption={Current operating system detection approach in DockSec.},label={lst:osdetect}]
+docker run --rm <image> cat /etc/os-release
+\end{lstlisting}
+
+The content of \texttt{/etc/os-release} is inspected for identifiers such as \texttt{alpine}, \texttt{debian}, or \texttt{ubuntu}. If no supported signature is found, the image is marked as \texttt{unknown}.
+
+From a functionality perspective, this is straightforward and effective for common base images. From a security perspective, however, it is the most significant inconsistency in the current implementation. The project documentation claims a non-execution inspection model, yet \texttt{docker run} starts a container process. Although the command attempts to read a benign file, it still crosses the boundary from static inspection to runtime execution. This discrepancy is discussed in detail in Section VI.
+
+\subsection{Package Extraction Without Running the Container}
+The package extraction stage better reflects the project's intended security model. The scanner creates a stopped container using \texttt{docker create}, exports its filesystem to a temporary tar archive using \texttt{docker export}, and parses package metadata directly from the archive. This approach avoids starting the image's default workload and aligns with Docker's documented semantics for container creation and filesystem export \cite{dockercreate,dockerexport}.
+
+For Debian-family images, the scanner reads \texttt{var/lib/dpkg/status}. For Alpine images, it reads \texttt{lib/apk/db/installed}. Both files are parsed into package name/version pairs. This design has several strengths:
+\begin{itemize}
+  \item It avoids invoking package managers inside the container.
+  \item It reduces the chance of triggering application startup logic.
+  \item It works consistently across host platforms because the parsing occurs locally in Python.
+  \item It keeps the extraction logic highly transparent.
+\end{itemize}
+
+The implementation also accounts for temporary-file cleanup and forced removal of the created container, which is important for reducing operational residue in repeated scans.
+
+\subsection{CVE Matching Logic}
+The CVE matcher loads vulnerability records from \texttt{data/demo\_cves.json}. Each CVE entry contains a CVE identifier, ecosystem, affected packages, version range expression, severity, and description. To improve lookup efficiency, the scanner builds an in-memory package-to-CVE table and then iterates over extracted packages.
+
+Version matching is performed through a simple expression language supporting comparison operators such as \texttt{<}, \texttt{<=}, \texttt{>}, \texttt{>=}, and \texttt{=}, as well as comma-separated conjunctions and \texttt{||}-separated disjunctions. Installed versions are normalized by stripping suffixes following hyphens or plus signs, for example converting \texttt{8.14.1-2+deb13u2} to \texttt{8.14.1}. The normalized version is then parsed using Python's \texttt{packaging.version} utilities.
+
+This approach is intentionally lightweight, but it also illustrates one of the central research challenges in vulnerability scanning: package versions in Linux distributions often cannot be evaluated safely using only upstream-style semantic version comparisons. Distribution maintainers may backport fixes without changing the apparent upstream version in a way that simple normalization can capture. Consequently, DockSec's matching is best understood as demonstrative rather than authoritative.
+
+\subsection{Risk Scoring and Severity Aggregation}
+The risk engine assigns weights to severity categories: CRITICAL = 10, HIGH = 7, MEDIUM = 4, and LOW = 1. It then computes two outputs:
+\begin{enumerate}
+  \item A total exposure score equal to the sum of the individual finding weights.
+  \item An overall qualitative risk level based on threshold rules.
+\end{enumerate}
+
+The current policy is conservative. Any CRITICAL finding yields an overall CRITICAL rating. Ten or more HIGH findings also trigger CRITICAL, while any nonzero HIGH count yields HIGH. Similar thresholds are used for MEDIUM findings. This simple policy is suitable for CI demonstrations because it is easy to reason about and implement. However, it is not equivalent to CVSS scoring, exploitability analysis, or environment-aware prioritization.
+
+\subsection{Report Generation}
+DockSec writes two output formats:
+\begin{itemize}
+  \item JSON for machine processing and CI workflows.
+  \item Markdown for human-readable review.
+\end{itemize}
+
+Each report includes the image name, detected operating system, generation timestamp, severity summary, overall risk level, total exposure score, and detailed findings. This dual-format strategy is a strong design choice for a prototype because it aligns with real-world workflow needs while remaining easy to inspect manually.
+
+\section{Security Model and Threat Analysis}
+\subsection{Intended Threat Model}
+The project documentation explicitly assumes that scanned images may be malicious. This is an appropriate and realistic stance. Public images, compromised build artifacts, or even internally built containers may contain hostile entrypoints, cryptomining logic, fork bombs, or privilege-abuse mechanisms. Therefore, a scanner that treats images as passive data blobs when they are in fact executable artifacts can become a stepping stone for attack.
+
+DockSec's documented mitigation strategy is to avoid \texttt{docker run} entirely and inspect filesystems only. In principle, this greatly reduces exposure. Creating a stopped container and exporting its filesystem lets the tool inspect package metadata while avoiding application startup. This model cannot eliminate all risk, because it still trusts the local Docker daemon and image processing path, but it is meaningfully safer than arbitrary execution of image workloads.
+
+\subsection{Observed Security Gap}
+Despite the intended design, the current \texttt{os\_detector.py} implementation invokes \texttt{docker run --rm <image> cat /etc/os-release}. That means the prototype does not fully satisfy its own strongest security claim. This observation matters for two reasons.
+
+First, it changes the operational trust assumption. A user reading the documentation may believe the tool never starts code from the target image, while the current code does start a containerized process. Second, it demonstrates a broader lesson for secure tooling research: threat-model claims must be verified against the code path, not inferred from design intent.
+
+\subsection{Risk Implications of the Gap}
+The immediate command executed inside the container is benign, but the mechanism still relies on launching the image. Depending on runtime configuration and image behavior, this can expose the scanner host to several categories of undesirable behavior:
+\begin{itemize}
+  \item Entrypoint or command interactions that behave unexpectedly.
+  \item Resource consumption or denial-of-service through startup logic.
+  \item Side effects mediated by the Docker runtime or mounted resources.
+  \item Expanded attack opportunity in case of container runtime vulnerabilities.
+\end{itemize}
+
+In other words, the difference between ``run a harmless command'' and ``do not run the image at all'' is operationally significant.
+
+\subsection{Toward a Fully Static Inspection Path}
+The good news is that DockSec is already close to a stronger model because package extraction uses filesystem export correctly. Operating system detection can be reimplemented without runtime execution by reading \texttt{etc/os-release} from the same exported tar archive. This would eliminate the principal inconsistency and align the code with the documented security model. More advanced approaches could avoid even Docker CLI interaction by parsing OCI image layouts directly, but that would raise implementation complexity.
+
+\subsection{Security Posture Summary}
+As currently implemented, DockSec is safer than naive scanners that inspect images through \texttt{docker run} for every stage, but it is not yet fully non-executing. From a research perspective, this is not a weakness to conceal; it is a valuable result. The prototype demonstrates both the feasibility of mostly static image inspection and the importance of checking whether individual helper stages inadvertently reintroduce execution.
+
+\section{Prototype Evaluation}
+\subsection{Evaluation Scope}
+DockSec is a prototype with a curated dataset and limited ecosystem support, so the goal of evaluation is not to claim benchmark superiority over established scanners. Instead, the evaluation asks four practical questions:
+\begin{enumerate}
+  \item Does the scanner complete the intended workflow on representative images?
+  \item Can it extract useful package information from supported distributions?
+  \item Does the CVE matcher produce expected outputs on the bundled dataset?
+  \item Are the reports appropriate for human review and basic CI gating?
+\end{enumerate}
+
+\subsection{Representative Test Artifacts}
+The repository contains generated reports for two images:
+\begin{itemize}
+  \item \texttt{nginx:latest}
+  \item \texttt{ubuntu:22.04}
+\end{itemize}
+
+These artifacts provide a limited but concrete basis for discussing prototype behavior.
+
+\subsection{Observed Results}
+Table~\ref{tab:results} summarizes the included reports.
+
+\begin{table}[!t]
+\centering
+\caption{Representative prototype results from existing project reports.}
+\label{tab:results}
+\begin{tabular}{p{0.22\textwidth}p{0.14\textwidth}p{0.18\textwidth}p{0.36\textwidth}}
+\toprule
+Image & Detected OS & Overall Risk & Observation \\
+\midrule
+\texttt{nginx:latest} & Debian & LOW & No vulnerabilities matched within the bundled demo dataset. \\
+\texttt{ubuntu:22.04} & Debian & CRITICAL & One critical vulnerability was matched: \texttt{CVE-2022-1292} for \texttt{libssl3 3.0.2-0ubuntu1.21}. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The \texttt{ubuntu:22.04} result is especially useful for illustrating the full pipeline. The package extractor identifies installed Debian packages, the CVE matcher finds a match against the demo OpenSSL record, the risk engine assigns a score of 10, and the CLI exits with a nonzero code because the overall risk is CRITICAL. This demonstrates that DockSec can support a basic continuous integration policy in which severe findings fail the build.
+
+The \texttt{nginx:latest} result shows a clean report under the toy dataset, producing a LOW overall risk with zero findings. This should not be interpreted as evidence that the image is truly free of vulnerabilities. Rather, it confirms that the report generation path behaves correctly when no matches are found.
+
+\subsection{Functional Strengths}
+Several useful prototype properties are visible in the available results:
+\begin{itemize}
+  \item End-to-end scans generate both JSON and Markdown output reliably.
+  \item Severity summaries are easy to understand.
+  \item Findings preserve enough context to identify the package, version, and mapped CVE.
+  \item CI behavior is deterministic and easy to embed in shell workflows.
+\end{itemize}
+
+\subsection{Qualitative Comparison with Larger Scanners}
+Table~\ref{tab:comparison} positions DockSec qualitatively against common open-source scanners.
+
+\begin{table}[!t]
+\centering
+\caption{Qualitative positioning of DockSec relative to larger open-source scanners.}
+\label{tab:comparison}
+\begin{tabular}{p{0.18\textwidth}p{0.16\textwidth}p{0.18\textwidth}p{0.18\textwidth}p{0.20\textwidth}}
+\toprule
+Tool & Intended Use & Data Source Model & Ecosystem Coverage & Primary Strength \\
+\midrule
+DockSec & Education, experimentation & Local curated dataset & Debian and Alpine system packages only & Architectural clarity and safe-inspection orientation \\
+Trivy & Production scanning & Continuously updated databases & OS packages, IaC, repositories, images, and more & Broad coverage and deployment-ready integrations \\
+Grype & Production scanning & Continuously updated databases and SBOM support & OS and language ecosystems, images, filesystems, and SBOMs & Rich artifact support and mature vulnerability workflows \\
+DockerScan & Broad Docker security analysis & Multiple checks and signatures & Vulnerabilities, secrets, runtime, CIS-style checks, supply-chain indicators & Multi-dimensional container security posture analysis \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This comparison clarifies the role of DockSec. Its value is not breadth. Its value is that the full system can be understood, critiqued, and evolved by a learner without absorbing the full complexity of production tooling.
+
+\subsection{Evaluation Limitations}
+The evaluation remains constrained in several ways:
+\begin{itemize}
+  \item The dataset contains only a very small number of CVEs.
+  \item No large-scale benchmark was conducted.
+  \item Accuracy against distribution-specific advisory truth was not measured.
+  \item Runtime, memory, and scalability metrics were not systematically captured.
+  \item Only Debian and Alpine extraction paths are supported.
+\end{itemize}
+
+These limitations are acceptable for a prototype paper if clearly disclosed, but they also define the boundary between the current system and a publishable empirical evaluation at larger scale.
+
+\section{Discussion}
+\subsection{Why a Small Scanner Still Matters}
+It is reasonable to ask why one should study a minimal scanner when high-quality scanners already exist. There are at least three answers. First, compact tools are valuable for pedagogy. Security engineering concepts are easier to teach when the implementation can be read end-to-end. Second, prototypes like DockSec support controlled experimentation. Researchers can change one stage, such as version normalization or risk scoring, and observe the effect without navigating a large production codebase. Third, educational prototypes often surface important system-design questions that are obscured by mature tooling abstractions, including where trust boundaries actually sit and how design intent diverges from code reality.
+
+\subsection{Static Inspection as a Design Principle}
+DockSec's most interesting design idea is not its CVE matching logic but its preference for static inspection. In vulnerability analysis, there is a recurring tradeoff between observation quality and execution risk. Dynamic techniques may reveal behavior that static methods miss, but they also increase the chance of triggering malicious or unstable code. For image inventory tasks, static inspection is often sufficient to answer fundamental questions such as which operating system packages are present. The prototype suggests that a meaningful subset of image risk assessment can be done without fully launching the artifact.
+
+\subsection{Interpretability and Trust}
+Security tools influence operational decisions, including whether a build is released, blocked, or escalated. In that setting, interpretability matters. DockSec reports are deliberately plain: package name, version, CVE, severity, and risk score. The matching logic is visible. The thresholds are readable. This simplicity helps users understand why a build failed. In environments where teams are skeptical of black-box security tools, this can improve trust and adoption.
+
+\subsection{Relationship to DockerScan-Inspired Design}
+The mention of inspiration from \texttt{cr0hn/dockerscan} is important academically because it clarifies both lineage and differentiation. DockerScan demonstrates a broad approach to Docker security in which vulnerability scanning is just one module among compliance, secrets, runtime, and supply-chain checks \cite{dockerscanrepo}. DockSec can be positioned as a deliberately narrowed research prototype derived from the same motivation: improving visibility into Docker artifact risk. The difference is that DockSec privileges minimalism and explainability over breadth. This distinction strengthens the paper because it avoids overstating novelty while still identifying a clear contribution.
+
+\subsection{Research Value of Known Imperfections}
+The prototype's imperfections are also instructive. The mismatch between the intended and actual execution model, the limited ecosystem support, and the simplistic version handling are not merely deficiencies; they are fertile areas for experimentation and improvement. A strong student or practitioner paper can explicitly position these as limitations that motivate future work rather than as hidden flaws.
+
+\section{Threats to Validity and Limitations}
+\subsection{Internal Validity}
+The system's matching logic may produce incorrect results because normalized upstream-style version comparison does not capture distribution backports or vendor patch metadata. This can generate false positives or false negatives relative to authoritative advisories.
+
+\subsection{External Validity}
+Results observed on \texttt{nginx:latest} and \texttt{ubuntu:22.04} cannot be generalized to the broader Docker ecosystem. Many real-world images include additional package managers, custom filesystem layouts, stripped metadata, or language-level dependencies beyond DockSec's current scope.
+
+\subsection{Construct Validity}
+DockSec measures a narrow notion of image risk: the presence of known vulnerabilities in selected operating system packages under a local dataset. This is not equivalent to exploitability, reachability, business impact, or overall deployment safety.
+
+\subsection{Dataset Limitations}
+The bundled CVE file is intentionally tiny and demonstrative. It is useful for validating pipeline logic but insufficient for security claims about real production images. Any paper using DockSec must be explicit that the prototype currently demonstrates scanning mechanics rather than comprehensive vulnerability intelligence.
+
+\subsection{Operational Limitations}
+The scanner depends on a local Docker daemon, can incur image pull latency, and does not yet support parallel image analysis, remote registry APIs, image tarball input, or cached metadata reuse. These constraints limit throughput in larger environments.
+
+\section{Future Work}
+DockSec provides a strong base for several concrete extensions.
+
+\subsection{Eliminate Runtime Execution Entirely}
+The highest-priority improvement is to replace \texttt{docker run}-based operating system detection with exported-filesystem parsing of \texttt{/etc/os-release}. This would align the implementation with the documented secure-inspection model.
+
+\subsection{Integrate Live Vulnerability Sources}
+Replacing the local demo dataset with a synchronized feed from NVD, OSV, or vendor advisory sources would significantly improve realism. This would also require namespace mapping, caching, advisory freshness management, and stronger handling of distribution-specific fixes.
+
+\subsection{Support Additional Ecosystems}
+Current coverage is limited to Debian and Alpine system packages. Future work should add RPM-family support and, eventually, language ecosystems such as Python, Node.js, Java, Go, and Rust. This would move DockSec closer to a broader software composition analysis tool.
+
+\subsection{SBOM Generation and Ingestion}
+Generating SPDX or CycloneDX SBOMs would improve interoperability with other security tools and compliance workflows \cite{ntiasbom,spdxspec}. Conversely, accepting an existing SBOM as input could decouple inventory generation from vulnerability matching.
+
+\subsection{Improved Risk Prioritization}
+The rule-based risk engine is easy to understand but coarse. Future versions could incorporate CVSS vectors, exploit prediction metrics, asset criticality, package reachability, and configurable policy thresholds.
+
+\subsection{Benchmarking and Empirical Validation}
+A more mature research evaluation would compare DockSec against production tools on a benchmark set of images, measuring coverage overlap, disagreement patterns, performance, and false-positive and false-negative characteristics. Such a study would be especially valuable if paired with ground-truth distribution advisories.
+
+\subsection{OCI-Native Parsing}
+Longer-term work could reduce dependence on Docker CLI interactions by parsing OCI images and layers directly according to the OCI Image Specification \cite{ociimage}. This may improve portability and reduce reliance on daemon behavior, though at the cost of added implementation complexity.
+
+\section{Conclusion}
+DockSec is a compact, auditable prototype for Docker image vulnerability assessment that illustrates the essential mechanics of static package-based scanning. The system validates image inputs, inspects image contents, extracts Debian and Alpine package inventories, matches them against a curated CVE dataset, computes a readable risk summary, and emits dual-format reports suitable for both humans and CI pipelines. Its most interesting contribution is architectural rather than competitive: it demonstrates how a scanner can bias toward filesystem-based inspection and low-complexity explainability.
+
+At the same time, the prototype usefully reveals the difficulty of making strong security claims in tooling. Although DockSec's package extraction stage follows a safer non-executing approach, its current operating system detection still relies on \texttt{docker run}, creating a mismatch between the intended threat model and the implemented one. Rather than weakening the project, this makes it a stronger educational case study because it exposes a concrete place where secure design intent and code diverge.
+
+For research, teaching, and experimentation, DockSec occupies a valuable niche. It is small enough to understand, practical enough to produce meaningful reports, and incomplete enough to motivate substantial future work. With improvements in static inspection completeness, advisory fidelity, ecosystem coverage, and standards support, it could evolve from a learning prototype into a more capable platform for lightweight container security research.
+
+\section*{Acknowledgment}
+This manuscript is based on the DockSec project repository, its accompanying documentation, sample reports, and source modules. The current draft uses a placeholder affiliation and email and should be updated before submission.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
