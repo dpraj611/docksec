@@ -13,10 +13,17 @@ def normalize_version(version):
     """
     Normalize distro-specific versions by trimming metadata.
     Example: 8.14.1-2+deb13u2 -> 8.14.1
+    Example: 1.29.7-1~trixie  -> 1.29.7
+    Example: 1.35+dfsg-3.1    -> 1.35
     """
-    for sep in ["-", "+"]:
+    for sep in ["-", "+", "~"]:
         if sep in version:
             version = version.split(sep)[0]
+    # Remove any remaining non-numeric suffixes
+    import re
+    match = re.match(r'^([\d]+(?:\.[\d]+)*)', version)
+    if match:
+        return match.group(1)
     return version
 
 
@@ -41,26 +48,33 @@ def is_vulnerable(installed, affected_expression):
     - ">= 7.0.0, < 8.4.0"
     - "< 8.4.0 || >= 9.1.0"
     """
-    installed_v = parse_version(normalize_version(installed))
+    try:
+        installed_v = parse_version(normalize_version(installed))
 
-    # OR conditions
-    for or_block in affected_expression.split("||"):
-        or_block = or_block.strip()
-        and_conditions = [c.strip() for c in or_block.split(",")]
+        # OR conditions
+        for or_block in affected_expression.split("||"):
+            or_block = or_block.strip()
+            and_conditions = [c.strip() for c in or_block.split(",")]
 
-        all_match = True
-        for condition in and_conditions:
-            operator, version = condition.split()
-            vuln_v = parse_version(version)
+            all_match = True
+            for condition in and_conditions:
+                parts = condition.strip().split()
+                if len(parts) != 2:
+                    all_match = False
+                    break
+                operator, version = parts
+                vuln_v = parse_version(version)
 
-            if not check_condition(installed_v, operator, vuln_v):
-                all_match = False
-                break
+                if not check_condition(installed_v, operator, vuln_v):
+                    all_match = False
+                    break
 
-        if all_match:
-            return True
+            if all_match:
+                return True
 
-    return False
+        return False
+    except Exception:
+        return False
 
 
 def match_cves(packages):

@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DockSec — Docker Security Scanner</title>
+    <meta name="description"
+        content="DockSec: Scan Docker images for known CVEs, assess risk, and search the NVD for live vulnerability data.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+
+    <!-- ═══ Animated Background ═══ -->
+    <div class="bg-grid"></div>
+    <div class="bg-glow bg-glow-1"></div>
+    <div class="bg-glow bg-glow-2"></div>
+
+    <!-- ═══ Header ═══ -->
+    <header class="header">
+        <div class="header-inner">
+            <div class="logo">
+                <span class="logo-icon">🐳</span>
+                <span class="logo-text">Dock<span class="logo-accent">Sec</span></span>
+            </div>
+            <nav class="nav">
+                <a href="#scanner" class="nav-link active" data-section="scanner">Scanner</a>
+                <a href="#nvd" class="nav-link" data-section="nvd">NVD Live Search</a>
+                <a href="#reports" class="nav-link" data-section="reports">Reports</a>
+            </nav>
+            <div class="header-status" id="dockerStatus">
+                <span class="status-dot"></span>
+                <span class="status-text">Checking...</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- ═══ Main Content ═══ -->
+    <main class="main">
+
+        <!-- ── Scanner Section ── -->
+        <section id="scanner" class="section active">
+            <div class="hero">
+                <h1 class="hero-title">Scan Docker Images for <span class="gradient-text">Vulnerabilities</span></h1>
+                <p class="hero-subtitle">Inspect container internals, match against 20+ known CVEs and the live NVD
+                    database, and get actionable security reports.</p>
+            </div>
+
+            <div class="scan-card glass-card">
+                <div class="scan-input-group">
+                    <div class="input-wrapper">
+                        <span class="input-icon">📦</span>
+                        <input type="text" id="imageInput"
+                            placeholder="Enter Docker image (e.g. nginx:latest, ubuntu:22.04, alpine:3.18)"
+                            autocomplete="off">
+                    </div>
+                    <button id="scanBtn" class="btn btn-primary" onclick="startScan()">
+                        <span class="btn-icon">🔍</span>
+                        <span class="btn-text">Scan Image</span>
+                    </button>
+                </div>
+
+                <div class="quick-images">
+                    <span class="quick-label">Quick scan:</span>
+                    <button class="chip" onclick="quickScan('nginx:latest')">nginx:latest</button>
+                    <button class="chip" onclick="quickScan('ubuntu:22.04')">ubuntu:22.04</button>
+                    <button class="chip" onclick="quickScan('alpine:3.18')">alpine:3.18</button>
+                    <button class="chip" onclick="quickScan('python:3.11-slim')">python:3.11-slim</button>
+                    <button class="chip" onclick="quickScan('node:20-slim')">node:20-slim</button>
+                </div>
+            </div>
+
+            <!-- Scan Progress -->
+            <div id="scanProgress" class="scan-progress glass-card" style="display:none;">
+                <h3 class="section-title">🔄 Scan Progress</h3>
+                <div class="progress-steps" id="progressSteps">
+                    <div class="step" data-step="checking_docker"><span class="step-icon">⏳</span> Checking Docker</div>
+                    <div class="step" data-step="pulling_image"><span class="step-icon">⏳</span> Pulling Image</div>
+                    <div class="step" data-step="detecting_os"><span class="step-icon">⏳</span> Detecting OS</div>
+                    <div class="step" data-step="extracting_packages"><span class="step-icon">⏳</span> Extracting
+                        Packages</div>
+                    <div class="step" data-step="matching_cves"><span class="step-icon">⏳</span> Matching CVEs</div>
+                    <div class="step" data-step="calculating_risk"><span class="step-icon">⏳</span> Calculating Risk
+                    </div>
+                    <div class="step" data-step="generating_reports"><span class="step-icon">⏳</span> Generating Reports
+                    </div>
+                </div>
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="progressBar"></div>
+                </div>
+                <p class="progress-status" id="progressStatus">Starting scan...</p>
+            </div>
+
+            <!-- Scan Results -->
+            <div id="scanResults" class="scan-results" style="display:none;">
+                <!-- Risk Overview -->
+                <div class="results-grid">
+                    <div class="risk-card glass-card" id="riskCard">
+                        <h3 class="section-title">⚡ Risk Assessment</h3>
+                        <div class="risk-gauge">
+                            <div class="risk-circle" id="riskCircle">
+                                <span class="risk-level" id="riskLevel">—</span>
+                            </div>
+                        </div>
+                        <div class="risk-meta">
+                            <div class="meta-item"><span class="meta-label">Image</span><span class="meta-value"
+                                    id="resultImage">—</span></div>
+                            <div class="meta-item"><span class="meta-label">OS</span><span class="meta-value"
+                                    id="resultOS">—</span></div>
+                            <div class="meta-item"><span class="meta-label">Packages</span><span class="meta-value"
+                                    id="resultPkgs">—</span></div>
+                            <div class="meta-item"><span class="meta-label">Exposure Score</span><span
+                                    class="meta-value" id="resultExposure">—</span></div>
+                        </div>
+                    </div>
+
+                    <div class="severity-card glass-card">
+                        <h3 class="section-title">📊 Severity Breakdown</h3>
+                        <div class="severity-bars" id="severityBars"></div>
+                    </div>
+                </div>
+
+                <!-- Vulnerability Table -->
+                <div class="vuln-card glass-card">
+                    <h3 class="section-title">🚨 Vulnerability Details</h3>
+                    <div class="table-wrapper">
+                        <table class="vuln-table" id="vulnTable">
+                            <thead>
+                                <tr>
+                                    <th>CVE ID</th>
+                                    <th>Package</th>
+                                    <th>Version</th>
+                                    <th>Severity</th>
+                                    <th>Score</th>
+                                    <th>Description</th>
+                                </tr>
+                            </thead>
+                            <tbody id="vulnTableBody"></tbody>
+                        </table>
+                    </div>
+                    <p class="no-vulns" id="noVulns" style="display:none;">✅ No vulnerabilities found! This image looks
+                        clean.</p>
+                </div>
+            </div>
+
+            <!-- Scan Error -->
+            <div id="scanError" class="error-card glass-card" style="display:none;">
+                <h3>❌ Scan Failed</h3>
+                <p id="scanErrorMsg"></p>
+            </div>
+        </section>
+
+        <!-- ── NVD Live Search Section ── -->
+        <section id="nvd" class="section">
+            <div class="hero">
+                <h1 class="hero-title">Search the <span class="gradient-text">NVD Database</span></h1>
+                <p class="hero-subtitle">Query the National Vulnerability Database in real-time for any package or CVE
+                    ID.</p>
+            </div>
+
+            <div class="scan-card glass-card">
+                <div class="scan-input-group">
+                    <div class="input-wrapper">
+                        <span class="input-icon">🌐</span>
+                        <input type="text" id="nvdInput"
+                            placeholder="Search by package name or CVE ID (e.g. openssl, CVE-2023-38545)"
+                            autocomplete="off">
+                    </div>
+                    <button id="nvdBtn" class="btn btn-accent" onclick="searchNVD()">
+                        <span class="btn-icon">🔎</span>
+                        <span class="btn-text">Search NVD</span>
+                    </button>
+                </div>
+                <div class="quick-images">
+                    <span class="quick-label">Try:</span>
+                    <button class="chip" onclick="quickNVD('openssl')">openssl</button>
+                    <button class="chip" onclick="quickNVD('curl')">curl</button>
+                    <button class="chip" onclick="quickNVD('nginx')">nginx</button>
+                    <button class="chip" onclick="quickNVD('linux kernel')">linux kernel</button>
+                    <button class="chip" onclick="quickNVD('glibc')">glibc</button>
+                </div>
+            </div>
+
+            <div id="nvdLoading" class="loading-indicator" style="display:none;">
+                <div class="spinner"></div>
+                <p>Querying NVD API... (may take a few seconds due to rate limiting)</p>
+            </div>
+
+            <div id="nvdResults" class="nvd-results"></div>
+        </section>
+
+        <!-- ── Reports Section ── -->
+        <section id="reports" class="section">
+            <div class="hero">
+                <h1 class="hero-title">Past <span class="gradient-text">Scan Reports</span></h1>
+                <p class="hero-subtitle">View previously generated security scan reports.</p>
+            </div>
+
+            <div id="reportsList" class="reports-grid"></div>
+            <div id="reportsEmpty" class="empty-state glass-card" style="display:none;">
+                <p>📂 No reports found. Run a scan to generate your first report!</p>
+            </div>
+        </section>
+    </main>
+
+    <!-- ═══ Footer ═══ -->
+    <footer class="footer">
+        <p>DockSec Scanner &copy; 2026 — Built by <strong>Dhruv Prajapati</strong> | Powered by NVD API 2.0</p>
+    </footer>
+
+    <script src="/app.js"></script>
+</body>
+
+</html>
